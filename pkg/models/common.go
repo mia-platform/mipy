@@ -11,11 +11,12 @@ const (
 
 const (
 	Terraform TemplateType = "terraform"
+	// Helm TemplateType = "helm"
 )
 
-type Resource struct {
-	Type TemplateType
-	Files []string
+type Resource interface {
+	Provision() error
+	GetType() TemplateType
 }
 
 type TemplatesConfig struct {
