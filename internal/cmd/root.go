@@ -40,7 +40,6 @@ func NewRootCommand() *cobra.Command {
 	// add sub commands
 	rootCmd.AddCommand(
 		ConfigCmd(),
-		InitCmd(),
 		LaunchCmd(),
 		VersionCmd(),
 	)

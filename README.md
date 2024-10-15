@@ -42,19 +42,12 @@ flags are:
 mipy config set mipy.json
 ```
 
-### init
-
-```
-mipy init
-```
-
-`mipy init` lets you preview the CRs that mipy plans to execute.
-
 ### launch
 
 flags are:
+- --environment (-e): required
 - --cr-list
 - --parallel
 - --error-code
-- debug
-- dry-run
+- --debug
+- --dry-run
