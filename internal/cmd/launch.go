@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 
 	"github.com/mia-platform/mipy/internal/cliconfig"
@@ -17,9 +18,44 @@ var debug bool
 var dryRun bool
 var environment string
 
-func getCRsDirectories(basePath string, templateId string, environment string) ([]string, error) {
-	var crPaths []string
-	searchPath := filepath.Join(basePath, templateId, "environment", environment)
+type CRInfo struct {
+	Path         string
+	TemplateType string
+}
+
+func handleTerraformCR(cr CRInfo) error {
+	fmt.Println("Handle template %s", cr.Path)
+	configFilePath := filepath.Join(cr.Path, "config.tf")
+	variablesFilePath := filepath.Join(cr.Path, "variables.env")
+
+	configContent, err := os.ReadFile(configFilePath)
+	if err != nil {
+		return fmt.Errorf("error reading config.tf: %v", err)
+	}
+
+	// Read the variables.env file
+	variablesContent, err := os.ReadFile(variablesFilePath)
+	if err != nil {
+		return fmt.Errorf("error reading variables.env: %v", err)
+	}
+	fmt.Println(configContent, variablesContent)
+	return nil
+}
+
+func launchCR(cr CRInfo) error {
+	if cr.TemplateType == "terraform" {
+		handleTerraformCR(cr)
+	} else {
+		fmt.Println("Template type not implemented")
+		return fmt.Errorf("Template type not implemented")
+	}
+
+	return nil
+}
+
+func getCRInfos(basePath string, template cliconfig.Template, environment string) ([]CRInfo, error) {
+	var crInfos []CRInfo
+	searchPath := filepath.Join(basePath, template.Id, "environment", environment)
 
 	err := filepath.WalkDir(searchPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -27,7 +63,11 @@ func getCRsDirectories(basePath string, templateId string, environment string) (
 		}
 
 		if d.IsDir() && path != searchPath {
-			crPaths = append(crPaths, path)
+			crInfo := CRInfo{
+				Path:         path,
+				TemplateType: template.Type,
+			}
+			crInfos = append(crInfos, crInfo)
 		}
 		return nil
 	})
@@ -35,20 +75,18 @@ func getCRsDirectories(basePath string, templateId string, environment string) (
 		return nil, err
 	}
 
-	return crPaths, nil
+	return crInfos, nil
 }
 
-func getCRsFullPath(config cliconfig.Config, environment string) ([]string, error) {
-	var crs []string
+func getCRsToLaunch(config cliconfig.Config, environment string) ([]CRInfo, error) {
+	var crs []CRInfo
 	var err error
 	for _, template := range config.Templates {
-
-		crDirs, err := getCRsDirectories(config.BasePath, template.Id, environment)
+		crInfos, err := getCRInfos(config.BasePath, template, environment)
 		if err != nil {
 			fmt.Println(err)
-			crDirs = []string{}
 		}
-		crs = append(crs, crDirs...)
+		crs = append(crs, crInfos...)
 	}
 	return crs, err
 }
@@ -58,19 +96,19 @@ func LaunchCmd() *cobra.Command {
 		Use:   "launch",
 		Short: "Launch",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			fmt.Println(environment)
-
 			// get configuration
 			config, err := cliconfig.ReadConfigFile()
 			if err != nil {
 				fmt.Errorf("Failed get templates from configuration")
 			}
-			crs, err := getCRsFullPath(*config, environment)
-			fmt.Println(crs)
+			crInfos, err := getCRsToLaunch(*config, environment)
+			fmt.Println(crInfos)
 
 			if dryRun == true {
 				return nil
 			}
+
+			launchCR(crInfos[1])
 
 			// get all cr for each template id in config
 			return errors.New("command not implemented")
