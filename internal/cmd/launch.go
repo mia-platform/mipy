@@ -1,12 +1,18 @@
 package cmd
 
 import (
-	"errors"
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
+	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 
+	"github.com/joho/godotenv"
 	"github.com/mia-platform/mipy/internal/cliconfig"
 	"github.com/spf13/cobra"
 )
@@ -17,15 +23,107 @@ var errorCode int
 var debug bool
 var dryRun bool
 var environment string
+var username string
+var password string
 
 type CRInfo struct {
-	Path         string
-	TemplateType string
+	Path                string
+	TemplateType        string
+	CICDProvider        string
+	CICDBaseUrl         string
+	CICDOrganization    string
+	CICDProject         string
+	TerraformPipelineID string
 }
 
-func handleTerraformCR(cr CRInfo) error {
-	fmt.Println("Handle template %s", cr.Path)
-	configFilePath := filepath.Join(cr.Path, "config.tf")
+type TerraformRequestBody struct {
+	Resources struct {
+		Repositories struct {
+			Self struct {
+				RefName string `json:"refName"`
+			} `json:"self"`
+		} `json:"repositories"`
+	} `json:"resources"`
+	TemplateParameters struct {
+		DebugMode            bool   `json:"DEBUG_MODE"`
+		TerraformAutoApprove string `json:"TERRAFORM_AUTO_APPROVE"`
+		TerraformAction      string `json:"TERRAFORM_ACTION"`
+	} `json:"templateParameters"`
+	Variables struct {
+		AzureSubscriptionID struct {
+			IsSecret bool   `json:"isSecret"`
+			Value    string `json:"value"`
+		} `json:"AZURE_SUBSCRIPTION_ID"`
+		AzureTenantID struct {
+			IsSecret bool   `json:"isSecret"`
+			Value    string `json:"value"`
+		} `json:"AZURE_TENANT_ID"`
+		TerraformVariables struct {
+			IsSecret bool   `json:"isSecret"`
+			Value    string `json:"value"`
+		} `json:"TERRAFORM_VARIABLES"`
+	} `json:"variables"`
+}
+
+func azureTerraformCR(cr CRInfo, user string, password string, configContent string, envVars map[string]string) error {
+	azSubscriptionID := envVars["AZURE_SUBSCRIPTION_ID"]
+	azTenantID := envVars["AZURE_TENANT_ID"]
+	terraformAction := envVars["ACTION"]
+	terraformAutoApprove := envVars["AUTO_APPROVE"]
+
+	requestBody := TerraformRequestBody{}
+	requestBody.Resources.Repositories.Self.RefName = "refs/heads/{branch}" // TODO default 'main'
+	requestBody.TemplateParameters.DebugMode = true
+	requestBody.TemplateParameters.TerraformAutoApprove = terraformAutoApprove
+	requestBody.TemplateParameters.TerraformAction = terraformAction
+	requestBody.Variables.AzureSubscriptionID.IsSecret = false
+	requestBody.Variables.AzureSubscriptionID.Value = azSubscriptionID
+	requestBody.Variables.AzureTenantID.IsSecret = false
+	requestBody.Variables.AzureTenantID.Value = azTenantID
+	requestBody.Variables.TerraformVariables.IsSecret = false
+	requestBody.Variables.TerraformVariables.Value = configContent
+
+	jsonData, err := json.Marshal(requestBody)
+	if err != nil {
+		fmt.Println("Error mashal error")
+		return err
+	}
+	auth := base64.StdEncoding.EncodeToString([]byte(user + ":" + password))
+
+	url := fmt.Sprintf("%s/%s/%s/_apis/pipelines/%s/runs?api-version=7.1", cr.CICDBaseUrl, cr.CICDOrganization, cr.CICDProject, cr.TerraformPipelineID)
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		log.Fatalf("Error creating request: %v", err)
+		return err
+	}
+
+	// Set headers
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Basic "+auth)
+
+	// Send the request
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Fatalf("Error sending request: %v", err)
+		return err
+	}
+	defer resp.Body.Close()
+
+	// Print the status code
+	fmt.Printf("Response Status Code: %d\n", resp.StatusCode)
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatalf("Error reading response body: %v", err)
+	}
+	fmt.Println("Response Body:", string(responseBody))
+	return nil
+}
+
+func handleTerraformCR(cr CRInfo, user string, password string) error {
+	fmt.Printf("Handle template %s\n", cr.Path)
+	configFilePath := filepath.Join(cr.Path, "configs.tf")
 	variablesFilePath := filepath.Join(cr.Path, "variables.env")
 
 	configContent, err := os.ReadFile(configFilePath)
@@ -33,20 +131,28 @@ func handleTerraformCR(cr CRInfo) error {
 		return fmt.Errorf("error reading config.tf: %v", err)
 	}
 
+	encodedConfigContent := base64.StdEncoding.EncodeToString(configContent)
+
 	// Read the variables.env file
-	variablesContent, err := os.ReadFile(variablesFilePath)
+	envVars, err := godotenv.Read(variablesFilePath)
 	if err != nil {
 		return fmt.Errorf("error reading variables.env: %v", err)
 	}
-	fmt.Println(configContent, variablesContent)
-	return nil
+
+	if cr.CICDProvider != "azure" {
+		return fmt.Errorf("CICD provider not supported")
+	}
+	return azureTerraformCR(cr, user, password, encodedConfigContent, envVars)
 }
 
-func launchCR(cr CRInfo) error {
+func launchCR(cr CRInfo, user string, password string) error {
 	if cr.TemplateType == "terraform" {
-		handleTerraformCR(cr)
+		err := handleTerraformCR(cr, user, password)
+		if err != nil {
+			return err
+		}
 	} else {
-		fmt.Println("Template type not implemented")
+		fmt.Println("Template type %s not implemented", cr.TemplateType)
 		return fmt.Errorf("Template type not implemented")
 	}
 
@@ -64,8 +170,17 @@ func getCRInfos(basePath string, template cliconfig.Template, environment string
 
 		if d.IsDir() && path != searchPath {
 			crInfo := CRInfo{
-				Path:         path,
-				TemplateType: template.Type,
+				Path:                path,
+				TemplateType:        template.Type,
+				CICDProvider:        template.CICDProvider,
+				CICDBaseUrl:         template.CICDBaseUrl,
+				TerraformPipelineID: template.TerraformPipelineID,
+			}
+
+			if template.CICDProvider == "azure" {
+				crInfo.CICDOrganization = template.AzureOrganization
+				crInfo.CICDProject = template.AzureProject
+
 			}
 			crInfos = append(crInfos, crInfo)
 		}
@@ -108,19 +223,28 @@ func LaunchCmd() *cobra.Command {
 				return nil
 			}
 
-			launchCR(crInfos[1])
+			for _, crInfo := range crInfos {
+				err = launchCR(crInfo, username, password)
+				if err != nil {
+					fmt.Println(err)
+				}
+			}
 
 			// get all cr for each template id in config
-			return errors.New("command not implemented")
+			return nil
 		},
 	}
 
-	cmd.Flags().StringSliceVar(&crList, "cr-list", []string{}, "List of CRs to launch")
-	cmd.Flags().BoolVar(&parallel, "parallel", false, "Launch CRs in parallel")
+	cmd.Flags().StringVarP(&username, "username", "u", "", "Username for auth to cicd provider")
+	cmd.Flags().StringVarP(&password, "password", "p", "", "Password for auth to cicd provider")
+	cmd.Flags().StringSliceVar(&crList, "cr-list", []string{}, "NOT IMPLEMENTED YET: List of CRs to launch")
+	cmd.Flags().BoolVar(&parallel, "parallel", false, "NOT IMPLEMENTED YET: Launch CRs in parallel")
 	cmd.Flags().IntVar(&errorCode, "error-code", 500, "Error code to trigger on failure")
-	cmd.Flags().BoolVar(&debug, "debug", false, "Enable debug mode")
+	cmd.Flags().BoolVar(&debug, "debug", false, "NOT IMPLEMENTED YET: Enable debug mode")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview CRs without executing")
 	cmd.Flags().StringVarP(&environment, "environment", "e", "", "Environment to deploy")
 	cmd.MarkFlagRequired("environment")
+	cmd.MarkFlagRequired("username")
+	cmd.MarkFlagRequired("password")
 	return cmd
 }

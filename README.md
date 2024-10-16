@@ -10,7 +10,12 @@ The mipy cli makes use of a configmap file as this one:
     "templates": [
         {
             "type": "enum", 
-            "path": "string"
+            "id": "string",
+            "cicdProvider": "string", // for now only "azure" is supported
+            "cicdProviderBaseUrl": "string",
+            "azureOrganization": "string",
+            "azureProject": "string",
+            "terraformPipelineId": "string"
         }
     ],
     "logLevel": "string"

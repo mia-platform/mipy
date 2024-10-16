@@ -12,8 +12,13 @@ type Config struct {
 }
 
 type Template struct {
-	Type string `json:"type"`
-	Id   string `json:"id"`
+	Type                string `json:"type"`
+	Id                  string `json:"id"`
+	CICDProvider        string `json:"cicdProvider"`
+	CICDBaseUrl         string `json:"cicdProviderBaseUrl"`
+	AzureOrganization   string `json:"azureOrganization"`
+	AzureProject        string `json:"azureProject"`
+	TerraformPipelineID string `json:"terraformPipelineId"`
 }
 
 func loadPreferredConfigPath() (string, error) {
