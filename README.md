@@ -1,7 +1,7 @@
 # mipy
 Cli helper to help in IaC provisioning through the Console pipelines
 
-## Setup
+## Setup
 
 The mipy cli makes use of a configmap file as this one:
 ```json
@@ -22,7 +22,7 @@ The mipy cli makes use of a configmap file as this one:
 }
 ```
 
-## Commands
+## Commands
 
 ### version
 
