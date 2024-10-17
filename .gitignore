@@ -130,3 +130,4 @@ $RECYCLE.BIN/
 mipyconfig.json
 environment
 config_path.txt
+dist/
