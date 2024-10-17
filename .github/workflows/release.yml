@@ -45,7 +45,7 @@ jobs:
       # Esecuzione di GoReleaser per rilasci ufficiali (su tag)
       - name: Run GoReleaser (Release)
         if: startsWith(github.ref, 'refs/tags/v')
-        run: goreleaser release --clean --skip-validate --skip-publish=false
+        run: goreleaser release --clean --skip-publish=false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
