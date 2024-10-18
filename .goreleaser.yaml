@@ -18,6 +18,11 @@ before:
 
 builds:
   - main: ./cmd/main.go
+    binary: >-
+      {{ .Os }}/
+      {{- .Arch }}/
+      {{- with .Arm }}v{{ . }}/{{ end }}
+      {{- .ProjectName }}
     no_unique_dist_dir: true
     env:
       - CGO_ENABLED=0
