@@ -125,13 +125,20 @@ func azureTerraformCR(cr CRInfo, user string, password string, variablesContent 
 }
 
 func handleTerraformCR(cr CRInfo, user string, password string) error {
-	fmt.Printf("Handle template %s\n", cr.Path)
-	configFilePath := filepath.Join(cr.Path, "configs.env")
-	variablesFilePath := filepath.Join(cr.Path, "variables.tf")
+	fmt.Printf("Handle CR %s\n", cr.Path)
+	var configFilePath, variablesFilePath string
+
+	if cr.filesInsideFolder {
+		configFilePath = filepath.Join(cr.Path, "configs.env")
+		variablesFilePath = filepath.Join(cr.Path, "variables.tf")
+	} else {
+		configFilePath = cr.Path + ".configs.env"
+		variablesFilePath = cr.Path + ".variables.tf"
+	}
 
 	variablesContent, err := os.ReadFile(variablesFilePath)
 	if err != nil {
-		return fmt.Errorf("error reading variables.tf: %v", err)
+		return fmt.Errorf("error reading file %s: %v", variablesFilePath, err)
 	}
 
 	encodedvariablesContent := base64.StdEncoding.EncodeToString(variablesContent)
@@ -139,7 +146,7 @@ func handleTerraformCR(cr CRInfo, user string, password string) error {
 	// Read the configs.env file
 	envVars, err := godotenv.Read(configFilePath)
 	if err != nil {
-		return fmt.Errorf("error reading configs.env: %v", err)
+		return fmt.Errorf("error reading %s: %v", configFilePath, err)
 	}
 
 	if cr.CICDProvider != "azure" {
@@ -174,12 +181,10 @@ func getCRInfos(basePath string, template cliconfig.Template, environment string
 			return err
 		}
 
-		// Calcola il livello di profondità corrente
 		currentDepth := len(strings.Split(path, string(os.PathSeparator)))
 
-		// Limita la navigazione solo al primo livello
 		if currentDepth > baseDepth+1 {
-			return fs.SkipDir // Salta questa directory e tutto il suo contenuto
+			return fs.SkipDir
 		}
 
 		if d.IsDir() && path != searchPath {
