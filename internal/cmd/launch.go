@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/joho/godotenv"
 	"github.com/mia-platform/mipy/internal/cliconfig"
@@ -34,6 +35,7 @@ type CRInfo struct {
 	CICDOrganization    string
 	CICDProject         string
 	TerraformPipelineID string
+	filesInsideFolder   bool // are cr file inside a dedicated folder {cr_name}/{filename}.ext or are multiple files {cr_name}.{filename}.ext
 }
 
 type TerraformRequestBody struct {
@@ -65,11 +67,12 @@ type TerraformRequestBody struct {
 	} `json:"variables"`
 }
 
-func azureTerraformCR(cr CRInfo, user string, password string, configContent string, envVars map[string]string) error {
+func azureTerraformCR(cr CRInfo, user string, password string, variablesContent string, envVars map[string]string) error {
 	azSubscriptionID := envVars["AZURE_SUBSCRIPTION_ID"]
 	azTenantID := envVars["AZURE_TENANT_ID"]
 	terraformAction := envVars["ACTION"]
 	terraformAutoApprove := envVars["AUTO_APPROVE"]
+	terraformProjectId := envVars["TERRAFORM_PROJECT_ID"]
 
 	requestBody := TerraformRequestBody{}
 	requestBody.Resources.Repositories.Self.RefName = "refs/heads/{branch}" // TODO default 'main'
@@ -81,16 +84,16 @@ func azureTerraformCR(cr CRInfo, user string, password string, configContent str
 	requestBody.Variables.AzureTenantID.IsSecret = false
 	requestBody.Variables.AzureTenantID.Value = azTenantID
 	requestBody.Variables.TerraformVariables.IsSecret = false
-	requestBody.Variables.TerraformVariables.Value = configContent
+	requestBody.Variables.TerraformVariables.Value = variablesContent
 
 	jsonData, err := json.Marshal(requestBody)
 	if err != nil {
-		fmt.Println("Error mashal error")
+		fmt.Println("Error marshal error")
 		return err
 	}
 	auth := base64.StdEncoding.EncodeToString([]byte(user + ":" + password))
 
-	url := fmt.Sprintf("%s/%s/%s/_apis/pipelines/%s/runs?api-version=7.1", cr.CICDBaseUrl, cr.CICDOrganization, cr.CICDProject, cr.TerraformPipelineID)
+	url := fmt.Sprintf("%s/%s/%s/_apis/pipelines/%s/runs?api-version=7.1", cr.CICDBaseUrl, cr.CICDOrganization, cr.CICDProject, terraformProjectId)
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		log.Fatalf("Error creating request: %v", err)
@@ -122,27 +125,34 @@ func azureTerraformCR(cr CRInfo, user string, password string, configContent str
 }
 
 func handleTerraformCR(cr CRInfo, user string, password string) error {
-	fmt.Printf("Handle template %s\n", cr.Path)
-	configFilePath := filepath.Join(cr.Path, "configs.tf")
-	variablesFilePath := filepath.Join(cr.Path, "variables.env")
+	fmt.Printf("Handle CR %s\n", cr.Path)
+	var configFilePath, variablesFilePath string
 
-	configContent, err := os.ReadFile(configFilePath)
-	if err != nil {
-		return fmt.Errorf("error reading config.tf: %v", err)
+	if cr.filesInsideFolder {
+		configFilePath = filepath.Join(cr.Path, "configs.env")
+		variablesFilePath = filepath.Join(cr.Path, "variables.tf")
+	} else {
+		configFilePath = cr.Path + ".configs.env"
+		variablesFilePath = cr.Path + ".variables.tf"
 	}
 
-	encodedConfigContent := base64.StdEncoding.EncodeToString(configContent)
-
-	// Read the variables.env file
-	envVars, err := godotenv.Read(variablesFilePath)
+	variablesContent, err := os.ReadFile(variablesFilePath)
 	if err != nil {
-		return fmt.Errorf("error reading variables.env: %v", err)
+		return fmt.Errorf("error reading file %s: %v", variablesFilePath, err)
+	}
+
+	encodedvariablesContent := base64.StdEncoding.EncodeToString(variablesContent)
+
+	// Read the configs.env file
+	envVars, err := godotenv.Read(configFilePath)
+	if err != nil {
+		return fmt.Errorf("error reading %s: %v", configFilePath, err)
 	}
 
 	if cr.CICDProvider != "azure" {
 		return fmt.Errorf("CICD provider not supported")
 	}
-	return azureTerraformCR(cr, user, password, encodedConfigContent, envVars)
+	return azureTerraformCR(cr, user, password, encodedvariablesContent, envVars)
 }
 
 func launchCR(cr CRInfo, user string, password string) error {
@@ -161,20 +171,29 @@ func launchCR(cr CRInfo, user string, password string) error {
 
 func getCRInfos(basePath string, template cliconfig.Template, environment string) ([]CRInfo, error) {
 	var crInfos []CRInfo
+	seenCRs := make(map[string]bool)
 	searchPath := filepath.Join(basePath, template.Id, "environment", environment)
+
+	baseDepth := len(strings.Split(searchPath, string(os.PathSeparator))) // Conta il livello di profondità del percorso base
 
 	err := filepath.WalkDir(searchPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 
+		currentDepth := len(strings.Split(path, string(os.PathSeparator)))
+
+		if currentDepth > baseDepth+1 {
+			return fs.SkipDir
+		}
+
 		if d.IsDir() && path != searchPath {
 			crInfo := CRInfo{
-				Path:                path,
-				TemplateType:        template.Type,
-				CICDProvider:        template.CICDProvider,
-				CICDBaseUrl:         template.CICDBaseUrl,
-				TerraformPipelineID: template.TerraformPipelineID,
+				Path:              path,
+				TemplateType:      template.Type,
+				CICDProvider:      template.CICDProvider,
+				CICDBaseUrl:       template.CICDBaseUrl,
+				filesInsideFolder: true,
 			}
 
 			if template.CICDProvider == "azure" {
@@ -183,6 +202,29 @@ func getCRInfos(basePath string, template cliconfig.Template, environment string
 
 			}
 			crInfos = append(crInfos, crInfo)
+		}
+
+		if !d.IsDir() {
+			filename := d.Name()
+			crName := strings.Split(filename, ".")[0]
+			crPath := filepath.Join(filepath.Dir(path), crName)
+			if !seenCRs[crPath] {
+				crInfo := CRInfo{
+					Path:              crPath,
+					TemplateType:      template.Type,
+					CICDProvider:      template.CICDProvider,
+					CICDBaseUrl:       template.CICDBaseUrl,
+					filesInsideFolder: false,
+				}
+
+				if template.CICDProvider == "azure" {
+					crInfo.CICDOrganization = template.AzureOrganization
+					crInfo.CICDProject = template.AzureProject
+
+				}
+				crInfos = append(crInfos, crInfo)
+				seenCRs[crPath] = true
+			}
 		}
 		return nil
 	})
@@ -217,7 +259,9 @@ func LaunchCmd() *cobra.Command {
 				fmt.Errorf("Failed get templates from configuration")
 			}
 			crInfos, err := getCRsToLaunch(*config, environment)
-			fmt.Println(crInfos)
+			for _, crInfo := range crInfos {
+				fmt.Println(crInfo.Path)
+			}
 
 			if dryRun == true {
 				return nil
@@ -230,7 +274,6 @@ func LaunchCmd() *cobra.Command {
 				}
 			}
 
-			// get all cr for each template id in config
 			return nil
 		},
 	}
