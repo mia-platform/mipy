@@ -172,7 +172,7 @@ func launchCR(cr CRInfo, user string, password string) error {
 func getCRInfos(basePath string, template cliconfig.Template, environment string) ([]CRInfo, error) {
 	var crInfos []CRInfo
 	seenCRs := make(map[string]bool)
-	searchPath := filepath.Join(basePath, template.Id, "environment", environment)
+	searchPath := filepath.Join(basePath, template.Id, "environments", environment)
 
 	baseDepth := len(strings.Split(searchPath, string(os.PathSeparator))) // Conta il livello di profondità del percorso base
 
