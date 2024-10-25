@@ -1,0 +1,19 @@
+{
+    "logLevel": "debug",
+    "basepath": "environment/manifests",
+    "templates": [
+        {
+            "id": "terraform-azure-manager",
+            "type": "terraform",
+            "cicdProvider": "azure",
+            "cicdProviderBaseUrl": "http://localhost:3000",
+            "azureOrganization": "azure-org",
+            "azureProject": "azure-project"
+        },
+        {
+            "id": "template-no-cr",
+            "type": "terraform",
+            "cicdProvider": "azure"
+        }
+    ]
+}

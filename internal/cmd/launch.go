@@ -68,14 +68,33 @@ type TerraformRequestBody struct {
 }
 
 func azureTerraformCR(cr CRInfo, user string, password string, variablesContent string, envVars map[string]string) error {
-	azSubscriptionID := envVars["AZURE_SUBSCRIPTION_ID"]
-	azTenantID := envVars["AZURE_TENANT_ID"]
-	terraformAction := envVars["ACTION"]
-	terraformAutoApprove := envVars["AUTO_APPROVE"]
-	terraformProjectId := envVars["TERRAFORM_PROJECT_ID"]
+	azSubscriptionID, ok := envVars["AZURE_SUBSCRIPTION_ID"]
+	if !ok {
+		return fmt.Errorf("AZURE_SUBSCRIPTION_ID not set")
+	}
+	azTenantID, ok := envVars["AZURE_TENANT_ID"]
+	if !ok {
+		return fmt.Errorf("AZURE_TENANT_ID not set")
+	}
+	terraformAction, ok := envVars["ACTION"]
+	if !ok {
+		return fmt.Errorf("ACTION not set")
+	}
+	terraformAutoApprove, ok := envVars["AUTO_APPROVE"]
+	if !ok {
+		return fmt.Errorf("AUTO_APPROVE not set")
+	}
+	terraformProjectId, ok := envVars["TERRAFORM_PROJECT_ID"]
+	if !ok {
+		return fmt.Errorf("TERRAFORM_PROJECT_ID not set")
+	}
+	repositoryBranchName, ok := envVars["REPOSITORY_BRANCH_NAME"]
+	if !ok {
+		repositoryBranchName = "master"
+	}
 
 	requestBody := TerraformRequestBody{}
-	requestBody.Resources.Repositories.Self.RefName = "refs/heads/{branch}" // TODO default 'main'
+	requestBody.Resources.Repositories.Self.RefName = "refs/heads/" + repositoryBranchName
 	requestBody.TemplateParameters.DebugMode = true
 	requestBody.TemplateParameters.TerraformAutoApprove = terraformAutoApprove
 	requestBody.TemplateParameters.TerraformAction = terraformAction
@@ -174,7 +193,7 @@ func getCRInfos(basePath string, template cliconfig.Template, environment string
 	seenCRs := make(map[string]bool)
 	searchPath := filepath.Join(basePath, template.Id, "environments", environment)
 
-	baseDepth := len(strings.Split(searchPath, string(os.PathSeparator))) // Conta il livello di profondità del percorso base
+	baseDepth := len(strings.Split(searchPath, string(os.PathSeparator)))
 
 	err := filepath.WalkDir(searchPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -258,6 +277,9 @@ func LaunchCmd() *cobra.Command {
 			if err != nil {
 				fmt.Errorf("Failed get templates from configuration")
 			}
+			if config == nil {
+				return fmt.Errorf("Configuration not set")
+			}
 			crInfos, err := getCRsToLaunch(*config, environment)
 			for _, crInfo := range crInfos {
 				fmt.Println(crInfo.Path)
@@ -282,7 +304,7 @@ func LaunchCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&password, "password", "p", "", "Password for auth to cicd provider")
 	cmd.Flags().StringSliceVar(&crList, "cr-list", []string{}, "NOT IMPLEMENTED YET: List of CRs to launch")
 	cmd.Flags().BoolVar(&parallel, "parallel", false, "NOT IMPLEMENTED YET: Launch CRs in parallel")
-	cmd.Flags().IntVar(&errorCode, "error-code", 500, "Error code to trigger on failure")
+	cmd.Flags().IntVar(&errorCode, "error-code", 500, "NOT IMPLEMENTED YET: Error code to trigger on failure")
 	cmd.Flags().BoolVar(&debug, "debug", false, "NOT IMPLEMENTED YET: Enable debug mode")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview CRs without executing")
 	cmd.Flags().StringVarP(&environment, "environment", "e", "", "Environment to deploy")
