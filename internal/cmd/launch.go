@@ -50,6 +50,7 @@ type TerraformRequestBody struct {
 		DebugMode            bool   `json:"DEBUG_MODE"`
 		TerraformAutoApprove string `json:"TERRAFORM_AUTO_APPROVE"`
 		TerraformAction      string `json:"TERRAFORM_ACTION"`
+		CustomResourceName   string `json:"CUSTOM_RESOURCE_NAME"`
 	} `json:"templateParameters"`
 	Variables struct {
 		AzureSubscriptionID struct {
@@ -93,11 +94,15 @@ func azureTerraformCR(cr CRInfo, user string, password string, variablesContent 
 		repositoryBranchName = "master"
 	}
 
+	customResourcePathParts := strings.Split(cr.Path, "/")
+	customResourceName := customResourcePathParts[len(customResourcePathParts)-1]
+
 	requestBody := TerraformRequestBody{}
 	requestBody.Resources.Repositories.Self.RefName = "refs/heads/" + repositoryBranchName
 	requestBody.TemplateParameters.DebugMode = true
 	requestBody.TemplateParameters.TerraformAutoApprove = terraformAutoApprove
 	requestBody.TemplateParameters.TerraformAction = terraformAction
+	requestBody.TemplateParameters.CustomResourceName = customResourceName
 	requestBody.Variables.AzureSubscriptionID.IsSecret = false
 	requestBody.Variables.AzureSubscriptionID.Value = azSubscriptionID
 	requestBody.Variables.AzureTenantID.IsSecret = false
