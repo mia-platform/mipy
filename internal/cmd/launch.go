@@ -26,6 +26,7 @@ var dryRun bool
 var environment string
 var username string
 var password string
+var forwardEnv bool
 
 type CRInfo struct {
 	Path                string
@@ -65,10 +66,14 @@ type TerraformRequestBody struct {
 			IsSecret bool   `json:"isSecret"`
 			Value    string `json:"value"`
 		} `json:"TERRAFORM_VARIABLES"`
+		EnvironmentToDeploy struct {
+			IsSecret bool   `json:"isSecret"`
+			Value    string `json:"value"`
+		} `json:"ENVIRONMENT_TO_DEPLOY,omitempty"`
 	} `json:"variables"`
 }
 
-func azureTerraformCR(cr CRInfo, user string, password string, variablesContent string, envVars map[string]string) error {
+func azureTerraformCR(cr CRInfo, user string, password string, variablesContent string, envVars map[string]string, forwardEnv bool, environment string) error {
 	azSubscriptionID, ok := envVars["AZURE_SUBSCRIPTION_ID"]
 	if !ok {
 		return fmt.Errorf("AZURE_SUBSCRIPTION_ID not set")
@@ -110,6 +115,12 @@ func azureTerraformCR(cr CRInfo, user string, password string, variablesContent 
 	requestBody.Variables.TerraformVariables.IsSecret = false
 	requestBody.Variables.TerraformVariables.Value = variablesContent
 
+	// Set ENVIRONMENT_TO_DEPLOY if forward-env flag is enabled
+	if forwardEnv {
+		requestBody.Variables.EnvironmentToDeploy.IsSecret = false
+		requestBody.Variables.EnvironmentToDeploy.Value = environment
+	}
+
 	jsonData, err := json.Marshal(requestBody)
 	if err != nil {
 		fmt.Println("Error marshal error")
@@ -148,7 +159,7 @@ func azureTerraformCR(cr CRInfo, user string, password string, variablesContent 
 	return nil
 }
 
-func handleTerraformCR(cr CRInfo, user string, password string) error {
+func handleTerraformCR(cr CRInfo, user string, password string, forwardEnv bool, environment string) error {
 	fmt.Printf("Handle CR %s\n", cr.Path)
 	var configFilePath, variablesFilePath string
 
@@ -176,12 +187,12 @@ func handleTerraformCR(cr CRInfo, user string, password string) error {
 	if cr.CICDProvider != "azure" {
 		return fmt.Errorf("CICD provider not supported")
 	}
-	return azureTerraformCR(cr, user, password, encodedvariablesContent, envVars)
+	return azureTerraformCR(cr, user, password, encodedvariablesContent, envVars, forwardEnv, environment)
 }
 
-func launchCR(cr CRInfo, user string, password string) error {
+func launchCR(cr CRInfo, user string, password string, forwardEnv bool, environment string) error {
 	if cr.TemplateType == "terraform" {
-		err := handleTerraformCR(cr, user, password)
+		err := handleTerraformCR(cr, user, password, forwardEnv, environment)
 		if err != nil {
 			return err
 		}
@@ -295,7 +306,7 @@ func LaunchCmd() *cobra.Command {
 			}
 
 			for _, crInfo := range crInfos {
-				err = launchCR(crInfo, username, password)
+				err = launchCR(crInfo, username, password, forwardEnv, environment)
 				if err != nil {
 					fmt.Println(err)
 				}
@@ -313,6 +324,7 @@ func LaunchCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&debug, "debug", false, "NOT IMPLEMENTED YET: Enable debug mode")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview CRs without executing")
 	cmd.Flags().StringVarP(&environment, "environment", "e", "", "Environment to deploy")
+	cmd.Flags().BoolVarP(&forwardEnv, "forward-env", "f", false, "Forward environment to pipeline as ENVIRONMENT_TO_DEPLOY variable")
 	cmd.MarkFlagRequired("environment")
 	cmd.MarkFlagRequired("username")
 	cmd.MarkFlagRequired("password")
